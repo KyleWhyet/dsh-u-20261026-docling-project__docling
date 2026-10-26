@@ -1,0 +1,64 @@
+name: "Run CI Main"
+
+on:
+  push:
+    branches:
+      - "main"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: "Run the full Python and package-compatibility matrix."
+        type: boolean
+        default: false
+      run_cross_platform:
+        description: "Run Windows and macOS smoke lanes."
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  code-checks:
+    # The reusable code-check workflow reads repository contents and pull
+    # request metadata (for its changed-path detection and PR reporting).
+    permissions:
+      contents: read
+      pull-requests: read
+
+    # Delegate all execution environments and job orchestration to the
+    # repository's reusable code-check workflow. The overall result of that
+    # workflow is the result of this job.
+    uses: ./.github/workflows/checks.yml
+
+    with:
+      # Run the test, example and package lanes regardless of changed paths,
+      # so every enabled check is exercised on main and on demand.
+      force_all_checks: true
+
+      # Do not skip tests based on Tach impact analysis.
+      use_tach: false
+
+      # Scheduled runs and manual runs with the full matrix input enabled
+      # exercise the complete Python version set configured by the project
+      # (3.10 through 3.14) and the cross-version package-install
+      # compatibility lanes. All other runs use only the baseline version.
+      python_versions: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_matrix)) && '["3.10", "3.11", "3.12", "3.13", "3.14"]' || '["3.10"]' }}
+      run_package_compat: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_matrix) }}
+
+      # Windows and macOS smoke lanes run only for manual dispatches that
+      # enable the full matrix and/or the cross-platform input. The reusable
+      # workflow selects the lightweight modules via the
+      # pytest.mark.cross_platform marker, so no test file list is maintained
+      # here.
+      run_windows: ${{ github.event_name == 'workflow_dispatch' && (inputs.full_matrix || inputs.run_cross_platform) }}
+      run_macos: ${{ github.event_name == 'workflow_dispatch' && (inputs.full_matrix || inputs.run_cross_platform) }}
+
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
